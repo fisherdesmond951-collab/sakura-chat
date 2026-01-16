@@ -40,7 +40,7 @@ export default async function handler(req, res) {
         textQuery: query,
         languageCode: "en",
         regionCode: "JP",
-        maxResultCount: 20   // 候補多めに取る
+        maxResultCount: 50   // ★ 20 → 50 に増やしてランダム性アップ
       }),
     });
 
@@ -49,7 +49,6 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: placesJson?.error?.message || "Places API error" });
     }
 
-    // いったん全部
     const allPlaces = (placesJson.places || []).filter(
       (p) => p?.id && p?.displayName?.text
     );
@@ -61,7 +60,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // ★4.0以上を優先
+    // ===== ★4.0以上を優先しつつランダム抽選 =====
     const highRated = allPlaces.filter(
       (p) => typeof p.rating === "number" && p.rating >= 4.0
     );
@@ -74,11 +73,10 @@ export default async function handler(req, res) {
       const rest = shuffle([...others]).slice(0, 5 - highRated.length);
       picked = shuffle([...highRated, ...rest]).slice(0, 5);
     } else {
-      // 4.0以上が一件もない時は、全部からランダム
       picked = shuffle([...allPlaces]).slice(0, Math.min(5, allPlaces.length));
     }
 
-    // ===== 2) 店名を ASCII のみ にする（ローマ字化） =====
+    // ===== 2) 店名を ASCII（英字）に統一 =====
     const namesForRomanize = picked.map((p) => p.displayName.text);
 
     const romanizePrompt = `
@@ -111,7 +109,7 @@ ${JSON.stringify(namesForRomanize)}
     const romanizedNames =
       safeJsonArray(romanizeJson?.choices?.[0]?.message?.content) || namesForRomanize;
 
-    // ===== 3) マップURL + seedテキスト =====
+    // ===== 3) マップURL + seed =====
     const items = picked.map((p, i) => {
       const nameEn = romanizedNames[i] || p.displayName.text;
 
@@ -134,7 +132,7 @@ ${JSON.stringify(namesForRomanize)}
       return { nameEn, mapsUrl, seed };
     });
 
-    // ===== 4) 口コミ 2〜3 文で詳細めに =====
+    // ===== 4) 口コミ生成（2〜3文） =====
     const insightPrompt = `
 You are Sakura-chan 🌸✨
 
@@ -191,8 +189,7 @@ ${items
   }
 }
 
-// --- helpers ---
-
+// ---------- helpers ----------
 function safeJsonArray(text) {
   if (!text || typeof text !== "string") return null;
   try {
@@ -200,9 +197,7 @@ function safeJsonArray(text) {
     if (Array.isArray(parsed) && parsed.every((x) => typeof x === "string")) {
       return parsed;
     }
-  } catch {
-    // ignore
-  }
+  } catch {}
   return null;
 }
 
