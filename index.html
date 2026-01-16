@@ -89,6 +89,12 @@
       margin-top: 10px;
       font-size: 12px;
     }
+    /* 追加: チャット内リンクの見た目 */
+    .bubble a {
+      color: #ff5aa5;
+      text-decoration: underline;
+      word-break: break-all;
+    }
   </style>
 </head>
 <body>
@@ -108,11 +114,23 @@
     const input = document.getElementById("input");
     const sendBtn = document.getElementById("send");
 
+    // 追加: テキスト中の URL を <a> に変換する関数
+    function linkify(text) {
+      const urlPattern = /(https?:\/\/[^\s]+)/g;
+      return text.replace(urlPattern, function (url) {
+        return '<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + url + "</a>";
+      });
+    }
+
     function addMsg(text, who) {
       const div = document.createElement("div");
       div.className = "msg " + who;
       div.innerHTML = '<span class="bubble"></span>';
-      div.querySelector(".bubble").textContent = text;
+
+      // URL をリンク化してから HTML として挿入
+      const bubble = div.querySelector(".bubble");
+      bubble.innerHTML = linkify(text);
+
       chat.appendChild(div);
       chat.scrollTop = chat.scrollHeight;
     }
