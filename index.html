@@ -4,108 +4,149 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Sakura-chan Food Guide 🌸</title>
+
   <style>
+    /* ===== 背景（サクラちゃん壁紙） ===== */
     body {
-      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
       margin: 0;
-      background: #fff7fb;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+      background-image: url("https://raw.githubusercontent.com/fisherdesmond951-collab/sakura-chat/main/public/sakura.png");
+      background-size: cover;
+      background-position: center;
+      background-attachment: fixed;
     }
+
+    /* 白ベール＋ぼかしで可読性UP */
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background: rgba(255, 247, 251, 0.75);
+      backdrop-filter: blur(6px);
+      z-index: -1;
+    }
+
     header {
       padding: 14px 16px;
-      background: #ffffff;
+      background: rgba(255, 255, 255, 0.85);
+      backdrop-filter: blur(4px);
+      border-bottom: 1px solid #f0d6e6;
       position: sticky;
       top: 0;
-      border-bottom: 1px solid #f0d6e6;
       z-index: 10;
     }
+
     header b {
       font-size: 16px;
     }
+
     main {
       max-width: 760px;
       margin: 0 auto;
       padding: 16px;
     }
+
+    /* ===== チャットカード ===== */
     #chat {
-      background: #ffffff;
+      background: rgba(255, 255, 255, 0.92);
       border: 1px solid #f0d6e6;
-      border-radius: 14px;
-      padding: 12px;
+      border-radius: 18px;
+      padding: 14px;
       min-height: 320px;
       max-height: 70vh;
       overflow-y: auto;
+      box-shadow: 0 8px 24px rgba(255, 90, 165, 0.15);
     }
+
     .msg {
       margin: 10px 0;
-      line-height: 1.35;
+      line-height: 1.4;
       white-space: pre-wrap;
     }
+
     .me {
       text-align: right;
     }
-    .me .bubble {
+
+    .bubble {
       display: inline-block;
-      background: #ffe1f0;
       padding: 10px 12px;
-      border-radius: 14px;
+      border-radius: 16px;
       max-width: 92%;
     }
+
+    .me .bubble {
+      background: linear-gradient(135deg, #ffd1e8, #ffe6f2);
+    }
+
     .bot .bubble {
-      display: inline-block;
       background: #ffffff;
       border: 1px solid #f0d6e6;
-      padding: 10px 12px;
-      border-radius: 14px;
-      max-width: 92%;
     }
+
     form {
       display: flex;
       gap: 10px;
       margin-top: 12px;
     }
+
     input {
       flex: 1;
       padding: 12px;
-      border-radius: 12px;
+      border-radius: 14px;
       border: 1px solid #f0d6e6;
       font-size: 14px;
+      background: rgba(255,255,255,0.95);
     }
+
     button {
-      padding: 12px 14px;
-      border-radius: 12px;
+      padding: 12px 16px;
+      border-radius: 14px;
       border: 0;
       background: #ff5aa5;
       color: white;
       font-weight: 700;
       cursor: pointer;
+      box-shadow: 0 4px 12px rgba(255, 90, 165, 0.4);
     }
+
     button:disabled {
       opacity: 0.6;
       cursor: default;
     }
+
     small {
       display: block;
       color: #6b6b6b;
       margin-top: 10px;
       font-size: 12px;
-    }
-    /* 追加: チャット内リンクの見た目 */
-    .bubble a {
-      color: #ff5aa5;
-      text-decoration: underline;
-      word-break: break-all;
+      text-align: center;
     }
   </style>
 </head>
+
 <body>
-  <header><b>🌸 Sakura-chan Japan Food Guide</b></header>
+  <header>
+    <b>🌸 Sakura-chan Japan Food Guide</b>
+  </header>
+
   <main>
     <div id="chat"></div>
+
     <form id="form">
-      <input id="input" placeholder='Type: "Shinjuku ramen" or "Namba sushi"' autocomplete="off" />
+      <input
+        id="input"
+        placeholder='Type: "Shinjuku ramen" or "Namba sushi"'
+        autocomplete="off"
+      />
       <button id="send" type="submit">Send</button>
     </form>
-    <small>Tip: "Station + Food" works best. e.g. Shibuya yakitori / Umeda sushi</small>
+
+    <small>
+      Tip: Station + Food works best 💕<br />
+      e.g. Shibuya yakitori / Umeda sushi
+    </small>
   </main>
 
   <script>
@@ -114,29 +155,17 @@
     const input = document.getElementById("input");
     const sendBtn = document.getElementById("send");
 
-    // 追加: テキスト中の URL を <a> に変換する関数
-    function linkify(text) {
-      const urlPattern = /(https?:\/\/[^\s]+)/g;
-      return text.replace(urlPattern, function (url) {
-        return '<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + url + "</a>";
-      });
-    }
-
     function addMsg(text, who) {
       const div = document.createElement("div");
       div.className = "msg " + who;
       div.innerHTML = '<span class="bubble"></span>';
-
-      // URL をリンク化してから HTML として挿入
-      const bubble = div.querySelector(".bubble");
-      bubble.innerHTML = linkify(text);
-
+      div.querySelector(".bubble").textContent = text;
       chat.appendChild(div);
       chat.scrollTop = chat.scrollHeight;
     }
 
     addMsg(
-      "Konnichiwa! I’m Sakura-chan 🌸✨\nTell me a station + food genre, like:\n• Shinjuku ramen\n• Namba sushi\n• Shibuya yakitori 💖",
+      "Konnichiwa! I’m Sakura-chan 🌸✨\nTell me a station + food, like:\n• Shinjuku ramen\n• Namba sushi\n• Shibuya yakitori 💖",
       "bot"
     );
 
@@ -153,7 +182,7 @@
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text })
+          body: JSON.stringify({ text }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Request failed");
