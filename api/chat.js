@@ -31,14 +31,16 @@ export default async function handler(req, res) {
           "places.id",
           "places.displayName",
           "places.formattedAddress",
-          "places.editorialSummary"
+          "places.editorialSummary",
+          "places.rating",
+          "places.userRatingCount"
         ].join(","),
       },
       body: JSON.stringify({
         textQuery: query,
         languageCode: "en",
         regionCode: "JP",
-        maxResultCount: 10,
+        maxResultCount: 20   // 候補多めに取る
       }),
     });
 
@@ -47,19 +49,37 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: placesJson?.error?.message || "Places API error" });
     }
 
-    const places = (placesJson.places || [])
-      .filter((p) => p?.id && p?.displayName?.text)
-      .slice(0, 5);
+    // いったん全部
+    const allPlaces = (placesJson.places || []).filter(
+      (p) => p?.id && p?.displayName?.text
+    );
 
-    if (places.length === 0) {
+    if (allPlaces.length === 0) {
       return res.json({
         reply:
           "Konnichiwa! I couldn't find good matches this time 🥺\nTry a simpler input like: Shinjuku ramen / Shibuya sushi 🌸",
       });
     }
 
+    // ★4.0以上を優先
+    const highRated = allPlaces.filter(
+      (p) => typeof p.rating === "number" && p.rating >= 4.0
+    );
+    const others = allPlaces.filter((p) => !highRated.includes(p));
+
+    let picked = [];
+    if (highRated.length >= 5) {
+      picked = shuffle([...highRated]).slice(0, 5);
+    } else if (highRated.length > 0) {
+      const rest = shuffle([...others]).slice(0, 5 - highRated.length);
+      picked = shuffle([...highRated, ...rest]).slice(0, 5);
+    } else {
+      // 4.0以上が一件もない時は、全部からランダム
+      picked = shuffle([...allPlaces]).slice(0, Math.min(5, allPlaces.length));
+    }
+
     // ===== 2) 店名を ASCII のみ にする（ローマ字化） =====
-    const namesForRomanize = places.map((p) => p.displayName.text);
+    const namesForRomanize = picked.map((p) => p.displayName.text);
 
     const romanizePrompt = `
 Convert each restaurant name to ASCII (English letters/numbers/punctuation) only.
@@ -92,19 +112,24 @@ ${JSON.stringify(namesForRomanize)}
       safeJsonArray(romanizeJson?.choices?.[0]?.message?.content) || namesForRomanize;
 
     // ===== 3) マップURL + seedテキスト =====
-    const items = places.map((p, i) => {
+    const items = picked.map((p, i) => {
       const nameEn = romanizedNames[i] || p.displayName.text;
 
-      // ✅ 英語UI寄せのマップURL（ブラウザならかなり英語になる）
       const mapsUrl =
         `https://www.google.com/maps/search/?api=1` +
         `&query=${encodeURIComponent(nameEn)}` +
         `&query_place_id=${encodeURIComponent(p.id)}` +
         `&hl=en&gl=us`;
 
+      const ratingText =
+        typeof p.rating === "number"
+          ? `Rating: ${p.rating.toFixed(1)} (${p.userRatingCount || 0} reviews). `
+          : "";
+
       const seed =
-        p.editorialSummary?.text ||
-        `A popular local restaurant in Japan. Address: ${p.formattedAddress || "Japan"}.`;
+        (p.editorialSummary?.text ? p.editorialSummary.text + " " : "") +
+        ratingText +
+        (p.formattedAddress ? `Address: ${p.formattedAddress}.` : "");
 
       return { nameEn, mapsUrl, seed };
     });
@@ -113,7 +138,7 @@ ${JSON.stringify(namesForRomanize)}
     const insightPrompt = `
 You are Sakura-chan 🌸✨
 
-Write 5 entries.
+Write ${items.length} entries.
 Rules:
 - English only
 - Cute, friendly travel-guide tone for foreign visitors
@@ -166,7 +191,8 @@ ${items
   }
 }
 
-// --- helper ---
+// --- helpers ---
+
 function safeJsonArray(text) {
   if (!text || typeof text !== "string") return null;
   try {
@@ -178,4 +204,12 @@ function safeJsonArray(text) {
     // ignore
   }
   return null;
+}
+
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
 }
