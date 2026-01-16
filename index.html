@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Sakura-chan Food Guide 🌸</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      margin: 0;
+      background: #fff7fb;
+    }
+    header {
+      padding: 14px 16px;
+      background: #ffffff;
+      position: sticky;
+      top: 0;
+      border-bottom: 1px solid #f0d6e6;
+      z-index: 10;
+    }
+    header b {
+      font-size: 16px;
+    }
+    main {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 16px;
+    }
+    #chat {
+      background: #ffffff;
+      border: 1px solid #f0d6e6;
+      border-radius: 14px;
+      padding: 12px;
+      min-height: 320px;
+      max-height: 70vh;
+      overflow-y: auto;
+    }
+    .msg {
+      margin: 10px 0;
+      line-height: 1.35;
+      white-space: pre-wrap;
+    }
+    .me {
+      text-align: right;
+    }
+    .me .bubble {
+      display: inline-block;
+      background: #ffe1f0;
+      padding: 10px 12px;
+      border-radius: 14px;
+      max-width: 92%;
+    }
+    .bot .bubble {
+      display: inline-block;
+      background: #ffffff;
+      border: 1px solid #f0d6e6;
+      padding: 10px 12px;
+      border-radius: 14px;
+      max-width: 92%;
+    }
+    form {
+      display: flex;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    input {
+      flex: 1;
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px solid #f0d6e6;
+      font-size: 14px;
+    }
+    button {
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 0;
+      background: #ff5aa5;
+      color: white;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+    small {
+      display: block;
+      color: #6b6b6b;
+      margin-top: 10px;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <header><b>🌸 Sakura-chan Japan Food Guide</b></header>
+  <main>
+    <div id="chat"></div>
+    <form id="form">
+      <input id="input" placeholder='Type: "Shinjuku ramen" or "Namba sushi"' autocomplete="off" />
+      <button id="send" type="submit">Send</button>
+    </form>
+    <small>Tip: "Station + Food" works best. e.g. Shibuya yakitori / Umeda sushi</small>
+  </main>
+
+  <script>
+    const chat = document.getElementById("chat");
+    const form = document.getElementById("form");
+    const input = document.getElementById("input");
+    const sendBtn = document.getElementById("send");
+
+    function addMsg(text, who) {
+      const div = document.createElement("div");
+      div.className = "msg " + who;
+      div.innerHTML = '<span class="bubble"></span>';
+      div.querySelector(".bubble").textContent = text;
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    addMsg(
+      "Konnichiwa! I’m Sakura-chan 🌸✨\nTell me a station + food genre, like:\n• Shinjuku ramen\n• Namba sushi\n• Shibuya yakitori 💖",
+      "bot"
+    );
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const text = input.value.trim();
+      if (!text) return;
+
+      addMsg(text, "me");
+      input.value = "";
+      sendBtn.disabled = true;
+
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Request failed");
+        addMsg(data.reply, "bot");
+      } catch (err) {
+        addMsg("Oops… something went wrong 🥺\n" + err.message, "bot");
+      } finally {
+        sendBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
