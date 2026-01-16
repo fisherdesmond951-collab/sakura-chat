@@ -1,7 +1,7 @@
 // api/chat.js
-// Google Places (Nearby Search) + Geocoding で候補を取り、評価4.0+優先。
-// 最終リンクは「店ページとして開く」ために /maps/place/?q=place_id: を使う。
-// もし place_id が無い/不正なら、店名+住所の place リンクにフォールバック。
+// Google Places API + Geocoding API で評価4.0+優先の店を探し、
+// Place Details API でレビュー（最大5件）を取得して “特徴” を要約して返す。
+// リンクは /maps/place/?q=place_id: で「店ページ」表示を狙う。
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -33,7 +33,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // 2) 近くのレストラン候補
+    // 2) 近くのレストラン候補（15分徒歩圏 ≒ 1.2km）
     const radiusMeters = 1200;
     const places = await nearbySearchRestaurants({
       location: stationLoc,
@@ -50,7 +50,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // 3) 評価4.0+優先、なければ高評価順
+    // 3) 評価4.0+優先（なければ高評価順）
     const rated = places
       .filter((p) => typeof p.rating === "number")
       .sort((a, b) => {
@@ -63,38 +63,53 @@ export default async function handler(req, res) {
     const chosenBase = fourPlus.length > 0 ? fourPlus : rated;
 
     // 4) 上位から少しランダムに最大5件
-    const pool = chosenBase.slice(0, Math.min(15, chosenBase.length));
+    const pool = chosenBase.slice(0, Math.min(12, chosenBase.length));
     shuffleInPlace(pool);
     const chosen = pool.slice(0, Math.min(5, pool.length));
 
-    // 5) 返答（数値レーティングは出さない）
+    // 5) 各店の Place Details（reviews）を取得して特徴抽出
+    const detailsList = await Promise.all(
+      chosen.map(async (p) => {
+        const details = await placeDetailsForReviews(p.place_id, apiKey);
+        return { base: p, details };
+      })
+    );
+
+    // 6) 返答組み立て（数値レーティングは出さない）
     let reply =
       `Konnichiwa! I’m Sakura-chan 🌸✨\n` +
       `Here are my picks near **${station}** for **${genre}** (within ~15 min walk)! Oishii~ 💖\n\n`;
 
-    chosen.forEach((p) => {
+    for (const item of detailsList) {
+      const p = item.base;
+      const d = item.details;
+
       const name = p.name || "Unknown Restaurant";
       const placeLoc = p.geometry?.location;
       const walkMin = estimateWalkMinutes(stationLoc, placeLoc);
       const access = Number.isFinite(walkMin) ? `Approx. ${walkMin} min walk` : `Near ${station}`;
 
-      // ★ 店ページとして開くリンク
       const mapUrl = makePlacePageUrl(p.place_id, name, p.vicinity || "", station);
 
-      const reviewsCount = typeof p.user_ratings_total === "number" ? p.user_ratings_total : null;
-      const vibe =
-        reviewsCount && reviewsCount >= 500
-          ? "Super popular — expect a little line! ✨"
-          : reviewsCount && reviewsCount >= 100
-          ? "Loved by many locals — yummy vibes! 🌸"
-          : "Looks like a cozy gem — worth a try! 💖";
+      // 口コミテキスト（最大5件）
+      const reviewTexts = (d?.reviews || [])
+        .map((r) => (typeof r.text === "string" ? r.text.trim() : ""))
+        .filter(Boolean);
+
+      // 特徴抽出（ルールベース：よく出る語＋カテゴリ辞書）
+      const insight = makeSakuraInsightFromReviews(reviewTexts);
+
+      // 口コミが取れない場合のフォールバック
+      const safeInsight =
+        insight ||
+        "Cute and tasty vibes! (Reviews are limited, but this spot looks promising!) 🌸✨";
 
       reply +=
         `🌸 ${name}\n` +
         `🚶 Access: Near ${station} (${access})\n` +
-        `✨ Sakura's Pick: ${vibe}\n` +
-        `📍 Let's go!: ${mapUrl}\n\n`;
-    });
+        `✨ Sakura’s Pick: ${safeInsight}\n` +
+        `📍 Let’s go!: ${mapUrl}\n\n`;
+    }
 
     reply += `I hope you find your favorite meal! Matane! 🌸✨`;
     return res.status(200).json({ reply });
@@ -163,13 +178,30 @@ async function nearbySearchRestaurants({ location, radius, keyword, apiKey }) {
   }));
 }
 
-// ★ ここがキモ：検索ではなく "place" として開く
+// Place Details で reviews を取る（無料枠＆制限あり。最大5件程度）
+async function placeDetailsForReviews(placeId, apiKey) {
+  if (!placeId) return null;
+
+  const url = new URL("https://maps.googleapis.com/maps/api/place/details/json");
+  url.searchParams.set("place_id", placeId);
+  // reviews は有効なフィールド。必要最小限だけ取る
+  url.searchParams.set("fields", "reviews");
+  url.searchParams.set("language", "en");
+  url.searchParams.set("key", apiKey);
+
+  const resp = await fetch(url.toString());
+  if (!resp.ok) return null;
+
+  const json = await resp.json();
+  if (json.status && json.status !== "OK") return null;
+
+  return json.result || null;
+}
+
 function makePlacePageUrl(placeId, name, vicinity, station) {
   if (placeId) {
-    // 店ページとして開く（place_id を place として解釈させる）
     return `https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(placeId)}`;
   }
-  // 予備：店名 + 住所/周辺情報で place ページに寄せる
   const q = `${name} ${vicinity || station} Japan`;
   return `https://www.google.com/maps/place/?q=${encodeURIComponent(q)}`;
 }
@@ -177,7 +209,7 @@ function makePlacePageUrl(placeId, name, vicinity, station) {
 function estimateWalkMinutes(origin, dest) {
   if (!origin || !dest || typeof dest.lat !== "number" || typeof dest.lng !== "number") return NaN;
   const meters = haversineMeters(origin.lat, origin.lng, dest.lat, dest.lng);
-  const mins = Math.max(1, Math.round(meters / 80));
+  const mins = Math.max(1, Math.round(meters / 80)); // 80 m/min ≒ 4.8km/h
   return Math.min(mins, 15);
 }
 
@@ -198,4 +230,54 @@ function shuffleInPlace(arr) {
     const j = Math.floor(Math.random() * (i + 1));
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
+}
+
+/* ---------------- Review summarizer (rule-based) ---------------- */
+
+// 口コミの上位傾向を「それっぽく」まとめる（捏造しない）
+// - よく出る語を拾う
+// - 料理/接客/雰囲気などのカテゴリ辞書で特徴を短くまとめる
+function makeSakuraInsightFromReviews(reviewTexts) {
+  if (!Array.isArray(reviewTexts) || reviewTexts.length === 0) return "";
+
+  const text = reviewTexts.join(" ").toLowerCase();
+
+  const buckets = [
+    { label: "taste", words: ["delicious", "tasty", "flavor", "broth", "noodles", "fresh", "crispy", "juicy", "umami", "rich"] },
+    { label: "service", words: ["friendly", "kind", "helpful", "staff", "service", "polite", "fast", "quick"] },
+    { label: "atmosphere", words: ["cozy", "cute", "calm", "quiet", "clean", "atmosphere", "vibe", "small", "comfortable"] },
+    { label: "line", words: ["line", "queue", "wait", "waiting", "busy", "crowded", "popular"] },
+    { label: "value", words: ["worth", "value", "reasonable", "portions", "price", "affordable"] },
+  ];
+
+  const found = [];
+  for (const b of buckets) {
+    let hit = 0;
+    for (const w of b.words) {
+      if (text.includes(w)) hit++;
+    }
+    if (hit > 0) found.push({ label: b.label, score: hit });
+  }
+
+  found.sort((a, b) => b.score - a.score);
+  const top = found.slice(0, 2).map((x) => x.label);
+
+  // ネガティブっぽい語があれば「注意点」を軽く入れる（断定しない）
+  const caution = /(slow|overpriced|salty|small portion|rude|noisy)/.test(text);
+
+  const parts = [];
+  if (top.includes("taste")) parts.push("Yummy flavors that people keep talking about!");
+  if (top.includes("service")) parts.push("Sweet staff vibes and smooth service!");
+  if (top.includes("atmosphere")) parts.push("Cozy atmosphere for a comfy meal!");
+  if (top.includes("line")) parts.push("Popular spot—maybe a little wait!");
+  if (top.includes("value")) parts.push("Feels worth it for many visitors!");
+
+  if (parts.length === 0) {
+    parts.push("Cute foodie vibes—reviews sound happy overall!");
+  }
+
+  let out = parts.slice(0, 2).join(" ");
+  if (caution) out += " (Some reviews mention a small downside, so go with a flexible mood!)";
+
+  return out + " 🌸✨";
 }
