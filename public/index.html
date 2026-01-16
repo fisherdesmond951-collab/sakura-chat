@@ -10,7 +10,7 @@
       margin: 0;
       font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 
-      background-image: url("/sakura.png?v=4");
+      background-image: url("/sakura.png?v=5");
       background-size: cover;
       background-position: center;
       background-attachment: fixed;
@@ -41,9 +41,9 @@
       padding: 18px 16px 28px;
     }
 
-    /* 🔽 0.90 → 0.88 に変更（ほのかに透ける） */
+    /* 🔽 チャットカード：透明度 0.85 */
     #chat {
-      background: rgba(255, 255, 255, 0.88);
+      background: rgba(255, 255, 255, 0.85);
       border: 1px solid #f0d6e6;
       border-radius: 18px;
       padding: 14px;
@@ -120,4 +120,100 @@
       margin-right: auto;
     }
 
-    @
+    @media (max-width: 720px) {
+      body { background-attachment: scroll; }
+    }
+
+    .bubble a {
+      color: #ff4a92;
+      text-decoration: underline;
+      word-break: break-all;
+    }
+  </style>
+</head>
+
+<body>
+  <header><b>🌸 Sakura-chan Japan Food Guide</b></header>
+
+  <main>
+    <!-- ここがチャット画面 -->
+    <div id="chat"></div>
+
+    <form id="form">
+      <input id="input" placeholder='Type: "Shinjuku ramen" or "Namba sushi"' autocomplete="off" />
+      <button id="send" type="submit">Send</button>
+    </form>
+
+    <small>Tip: Station + Food works best 💕 e.g. Shibuya yakitori / Umeda sushi</small>
+  </main>
+
+  <script>
+    const chat = document.getElementById("chat");
+    const form = document.getElementById("form");
+    const input = document.getElementById("input");
+    const sendBtn = document.getElementById("send");
+
+    function escapeHtml(str) {
+      return str.replace(/[&<>"']/g, (ch) => {
+        switch (ch) {
+          case "&": return "&amp;";
+          case "<": return "&lt;";
+          case ">": return "&gt;";
+          case '"': return "&quot;";
+          case "'": return "&#39;";
+          default: return ch;
+        }
+      });
+    }
+
+    // URL → クリック可能なリンクに変換
+    function linkify(text) {
+      const escaped = escapeHtml(text);
+      const urlRegex = /(https?:\/\/[^\s<]+)/g;
+      return escaped.replace(
+        urlRegex,
+        (url) => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`
+      );
+    }
+
+    function addMsg(text, who) {
+      const div = document.createElement("div");
+      div.className = "msg " + who;
+      div.innerHTML = '<span class="bubble"></span>';
+      div.querySelector(".bubble").innerHTML = linkify(text);
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    addMsg(
+      "Konnichiwa! I’m Sakura-chan 🌸✨\nTell me a station + food, like:\n• Shinjuku ramen\n• Namba sushi\n• Shibuya yakitori 💖",
+      "bot"
+    );
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const text = input.value.trim();
+      if (!text) return;
+
+      addMsg(text, "me");
+      input.value = "";
+      sendBtn.disabled = true;
+
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Request failed");
+        addMsg(data.reply, "bot");
+      } catch (err) {
+        addMsg("Oops… something went wrong 🥺\n" + err.message, "bot");
+      } finally {
+        sendBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
