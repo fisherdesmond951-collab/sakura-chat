@@ -10,20 +10,19 @@
       margin: 0;
       font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 
-      /* ✅ 背景はくっきり表示 */
+      /* 背景（サクラちゃん壁紙） */
       background-image: url("/sakura.png?v=3");
       background-size: cover;
       background-position: center;
       background-attachment: fixed;
     }
 
-    /* ✅ ぼかさない：透明ベールだけ（画質がシャープになる） */
+    /* 背景はぼかさず、少しだけ白ベール */
     body::before {
       content: "";
       position: fixed;
       inset: 0;
       background: rgba(255, 247, 251, 0.45);
-      /* backdrop-filter を消すのがポイント */
       z-index: -1;
     }
 
@@ -44,9 +43,9 @@
       padding: 18px 16px 28px;
     }
 
-    /* ✅ チャット枠を白強めにして、背景はシャープに見せる */
+    /* 🔽 チャットカード：少しだけ透明にした（0.9） */
     #chat {
-      background: rgba(255, 255, 255, 0.96);
+      background: rgba(255, 255, 255, 0.90);
       border: 1px solid #f0d6e6;
       border-radius: 18px;
       padding: 14px;
@@ -123,9 +122,16 @@
       margin-right: auto;
     }
 
-    /* モバイルで背景固定が重い場合があるので軽めに */
+    /* モバイル向け：背景固定だと重いのでオフ */
     @media (max-width: 720px) {
       body { background-attachment: scroll; }
+    }
+
+    /* リンクのスタイル（地図リンク用） */
+    .bubble a {
+      color: #ff4a92;
+      text-decoration: underline;
+      word-break: break-all;
     }
   </style>
 </head>
@@ -150,11 +156,39 @@
     const input = document.getElementById("input");
     const sendBtn = document.getElementById("send");
 
+    // HTMLエスケープ（安全のため）
+    function escapeHtml(str) {
+      return str.replace(/[&<>"']/g, (ch) => {
+        switch (ch) {
+          case "&": return "&amp;";
+          case "<": return "&lt;";
+          case ">": return "&gt;";
+          case '"': return "&quot;";
+          case "'": return "&#39;";
+          default: return ch;
+        }
+      });
+    }
+
+    // URL を aタグに変換してクリック可能にする
+    function linkify(text) {
+      const escaped = escapeHtml(text);
+      const urlRegex = /(https?:\/\/[^\s<]+)/g;
+      return escaped.replace(
+        urlRegex,
+        (url) => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`
+      );
+    }
+
     function addMsg(text, who) {
       const div = document.createElement("div");
       div.className = "msg " + who;
       div.innerHTML = '<span class="bubble"></span>';
-      div.querySelector(".bubble").textContent = text;
+      const bubble = div.querySelector(".bubble");
+
+      // bot / user 共通でリンク化
+      bubble.innerHTML = linkify(text);
+
       chat.appendChild(div);
       chat.scrollTop = chat.scrollHeight;
     }
