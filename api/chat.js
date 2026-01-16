@@ -1,7 +1,7 @@
 // api/chat.js
 // Google Places API + Geocoding API で実データ検索し、評価4.0+を優先。
 // 15分徒歩圏（約1.2km）に限定して最大5件返す。
-// さらに place_id を使うので、Google Mapsを開くと「その店にピン」が刺さる。
+// ★リンクは「緯度,経度」で作るので、Googleマップで必ずピンが刺さる。
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -37,7 +37,6 @@ export default async function handler(req, res) {
     }
 
     // 2) 駅周辺 15分徒歩圏（約1.2km）でレストラン検索
-    // Nearby Searchはrating / place_id / geometry を返してくれるのでピン固定リンクが作れます。
     const radiusMeters = 1200;
     const places = await nearbySearchRestaurants({
       location: stationLoc,
@@ -54,11 +53,10 @@ export default async function handler(req, res) {
       });
     }
 
-    // 3) 評価4.0+を優先。なければ高評価順（レビュー数も加味）で上位を使う
+    // 3) 評価4.0+を優先。なければ高評価順（レビュー数も加味）
     const rated = places
       .filter((p) => typeof p.rating === "number")
       .sort((a, b) => {
-        // rating DESC, user_ratings_total DESC
         const r = (b.rating ?? 0) - (a.rating ?? 0);
         if (r !== 0) return r;
         return (b.user_ratings_total ?? 0) - (a.user_ratings_total ?? 0);
@@ -67,7 +65,7 @@ export default async function handler(req, res) {
     const fourPlus = rated.filter((p) => (p.rating ?? 0) >= 4.0);
     const chosenBase = fourPlus.length > 0 ? fourPlus : rated;
 
-    // 4) 最大5件。多少ランダム性を持たせる（上位候補からシャッフル）
+    // 4) 最大5件。上位候補からシャッフルして少しランダムに
     const pool = chosenBase.slice(0, Math.min(15, chosenBase.length));
     shuffleInPlace(pool);
     const chosen = pool.slice(0, Math.min(5, pool.length));
@@ -77,20 +75,24 @@ export default async function handler(req, res) {
       `Konnichiwa! I’m Sakura-chan 🌸✨\n` +
       `Here are my picks near **${station}** for **${genre}** (within ~15 min walk)! Oishii~ 💖\n\n`;
 
-    chosen.forEach((p, i) => {
+    chosen.forEach((p) => {
       const name = p.name || "Unknown Restaurant";
-      const walkMin = estimateWalkMinutes(stationLoc, p.geometry?.location);
+      const placeLoc = p.geometry?.location;
+      const walkMin = estimateWalkMinutes(stationLoc, placeLoc);
       const access = Number.isFinite(walkMin) ? `Approx. ${walkMin} min walk` : `Near ${station}`;
-      const mapUrl = makePinnedMapUrl(p.place_id, name, station);
 
-      // “Sakura Insight” はレビュー本文をAPIから取るには別途 Place Details が必要なので、
-      // ここでは「ジャンル + 近さ + 人気」から安全に一言を生成（事実を捏造しない）
-      const reviewsCount = typeof p.user_ratings_total === "number" ? p.user_ratings_total : null;
-      const vibe = reviewsCount && reviewsCount >= 500
-        ? "Super popular — expect a little line! ✨"
-        : reviewsCount && reviewsCount >= 100
-        ? "Loved by many locals — yummy vibes! 🌸"
-        : "Looks like a cozy gem — worth a try! 💖";
+      // ★ ここが重要：緯度経度で確実にピンが刺さるリンク
+      const mapUrl = makeLatLngMapUrl(placeLoc, name, station);
+
+      const reviewsCount =
+        typeof p.user_ratings_total === "number" ? p.user_ratings_total : null;
+
+      const vibe =
+        reviewsCount && reviewsCount >= 500
+          ? "Super popular — expect a little line! ✨"
+          : reviewsCount && reviewsCount >= 100
+          ? "Loved by many locals — yummy vibes! 🌸"
+          : "Looks like a cozy gem — worth a try! 💖";
 
       reply +=
         `🌸 ${name}\n` +
@@ -114,10 +116,6 @@ export default async function handler(req, res) {
 /* ------------------------ Helpers ------------------------ */
 
 function parseStationGenre(text) {
-  // 入力例:
-  // "Shinjuku ramen"
-  // "Shibuya, yakitori"
-  // "[Station], [Genre]" も対応
   const cleaned = text.replace(/\s+/g, " ").trim();
 
   if (cleaned.includes(",")) {
@@ -128,11 +126,8 @@ function parseStationGenre(text) {
   }
 
   const parts = cleaned.split(" ");
-  if (parts.length === 1) {
-    return { station: parts[0], genre: "restaurants" };
-  }
+  if (parts.length === 1) return { station: parts[0], genre: "restaurants" };
 
-  // 先頭を駅、残りをジャンル（シンプルに）
   const station = parts[0];
   const genre = parts.slice(1).join(" ").trim() || "restaurants";
   return { station, genre };
@@ -171,21 +166,21 @@ async function nearbySearchRestaurants({ location, radius, keyword, apiKey }) {
   const json = await resp.json();
   const results = Array.isArray(json.results) ? json.results : [];
 
-  // 必要なフィールドだけ使う
   return results.map((p) => ({
     name: p.name,
-    place_id: p.place_id,
     rating: p.rating,
     user_ratings_total: p.user_ratings_total,
-    geometry: p.geometry,
+    geometry: p.geometry, // { location: { lat, lng } }
   }));
 }
 
-function makePinnedMapUrl(placeId, fallbackName, station) {
-  if (placeId) {
-    return `https://www.google.com/maps/search/?api=1&query=place_id:${encodeURIComponent(placeId)}`;
+// ★ place_id を使わず、緯度経度でピンを刺す
+function makeLatLngMapUrl(placeLoc, fallbackName, station) {
+  if (placeLoc && typeof placeLoc.lat === "number" && typeof placeLoc.lng === "number") {
+    // これが一番確実：その座標にピンが刺さる
+    return `https://www.google.com/maps/search/?api=1&query=${placeLoc.lat},${placeLoc.lng}`;
   }
-  // place_id が無い場合の保険（通常は入る）
+  // 万一座標が無い時だけ保険
   const q = `${fallbackName} ${station}`;
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
 }
@@ -194,16 +189,12 @@ function estimateWalkMinutes(origin, dest) {
   if (!origin || !dest || typeof dest.lat !== "number" || typeof dest.lng !== "number") return NaN;
 
   const meters = haversineMeters(origin.lat, origin.lng, dest.lat, dest.lng);
-
-  // 徒歩速度を 80 m/分（約4.8km/h）としてざっくり推定
-  const mins = Math.max(1, Math.round(meters / 80));
-
-  // 15分圏っぽく見せるための上限（検索半径に合わせる）
+  const mins = Math.max(1, Math.round(meters / 80)); // 80 m/min ≒ 4.8km/h
   return Math.min(mins, 15);
 }
 
 function haversineMeters(lat1, lng1, lat2, lng2) {
-  const R = 6371000; // meters
+  const R = 6371000;
   const toRad = (d) => (d * Math.PI) / 180;
 
   const dLat = toRad(lat2 - lat1);
