@@ -1,7 +1,7 @@
 // api/chat.js
-// Google Places + Geocoding でお店を探し、
-// Place Details の reviews を OpenAI で要約して、
-// 各店について「口コミベースの詳しい説明」を英語で返す。
+// Google Places + Geocoding でお店検索。
+// Place Details の reviews を OpenAI で要約し、
+// 各店について「読みやすい 2〜3文」の口コミベース説明を返す。
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -15,12 +15,12 @@ export default async function handler(req, res) {
 
     if (!mapsKey) {
       return res.status(500).json({
-        error: "GOOGLE_MAPS_API_KEY is not set. Add it in Vercel Environment Variables.",
+        error: "GOOGLE_MAPS_API_KEY is not set.",
       });
     }
     if (!openaiKey) {
       return res.status(500).json({
-        error: "OPENAI_API_KEY is not set. Add it in Vercel Environment Variables.",
+        error: "OPENAI_API_KEY is not set.",
       });
     }
 
@@ -32,7 +32,7 @@ export default async function handler(req, res) {
 
     const { station, genre } = parseStationGenre(text);
 
-    // 1) 駅の座標
+    // 1) 駅をジオコーディング
     const stationLoc = await geocodeToLocation(`${station} station, Japan`, mapsKey);
     if (!stationLoc) {
       return res.status(200).json({
@@ -42,7 +42,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // 2) 15分徒歩圏（約1.2km）でレストラン検索
+    // 2) 駅周辺 15分徒歩圏（約1.2km）で検索
     const radiusMeters = 1200;
     const places = await nearbySearchRestaurants({
       location: stationLoc,
@@ -59,7 +59,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // 3) 評価4.0+優先（なければ高評価順）
+    // 3) 評価4.0+優先
     const rated = places
       .filter((p) => typeof p.rating === "number")
       .sort((a, b) => {
@@ -71,61 +71,48 @@ export default async function handler(req, res) {
     const fourPlus = rated.filter((p) => (p.rating ?? 0) >= 4.0);
     const chosenBase = fourPlus.length > 0 ? fourPlus : rated;
 
-    // 4) 上位候補からシャッフルして最大5件
-    const pool = chosenBase.slice(0, Math.min(12, chosenBase.length));
+    // 4) 上位候補から最大5件
+    const pool = chosenBase.slice(0, Math.min(10, chosenBase.length));
     shuffleInPlace(pool);
     const chosen = pool.slice(0, Math.min(5, pool.length));
 
-    // 5) 各店について Place Details(review) + OpenAI 要約
-    const detailAndSummaryList = await Promise.all(
+    // 5) Reviews + OpenAI 要約（短め）
+    const summarized = await Promise.all(
       chosen.map(async (p) => {
         const details = await placeDetailsForReviews(p.place_id, mapsKey);
         const reviewTexts = extractReviewTexts(details);
-        const sakuraSummary = await summarizeReviewsWithOpenAI({
+        const summary = await summarizeReviewsWithOpenAI({
           openaiKey,
           placeName: p.name,
           station,
           genre,
           reviewTexts,
         });
-
-        return { base: p, stationLoc, summary: sakuraSummary };
+        return { base: p, summary };
       })
     );
 
-    // 6) 返答組み立て（数値レーティングは出さない）
+    // 6) 返答
     let reply =
       `Konnichiwa! I’m Sakura-chan 🌸✨\n` +
-      `Here are my detailed picks near **${station}** for **${genre}** (within ~15 min walk)! Oishii~ 💖\n\n`;
+      `Here are my picks near **${station}** for **${genre}** (within ~15 min walk)! Oishii~ 💖\n\n`;
 
-    for (const item of detailAndSummaryList) {
+    for (const item of summarized) {
       const p = item.base;
-      const stationLoc2 = item.stationLoc;
       const name = p.name || "Unknown Restaurant";
       const placeLoc = p.geometry?.location;
-      const walkMin = estimateWalkMinutes(stationLoc2, placeLoc);
+      const walkMin = estimateWalkMinutes(stationLoc, placeLoc);
       const access = Number.isFinite(walkMin) ? `Approx. ${walkMin} min walk` : `Near ${station}`;
-
       const mapUrl = makePlacePageUrl(p.place_id, name, p.vicinity || "", station);
-      const reviewsCount =
-        typeof p.user_ratings_total === "number" ? p.user_ratings_total : null;
-
-      const countText =
-        reviewsCount && reviewsCount >= 10
-          ? `${reviewsCount}+ reviews`
-          : reviewsCount
-          ? `${reviewsCount} reviews`
-          : "a few reviews";
 
       const insight =
         item.summary ||
-        "Cute foodie vibes! Reviews are limited, but this spot looks promising for an adventure. 🌸✨";
+        "Lovely flavors and a comfy vibe make this a pleasant stop for food lovers. 🌸✨";
 
       reply +=
         `🌸 ${name}\n` +
         `🚶 Access: Near ${station} (${access})\n` +
-        `📝 Reviews: Based on ${countText}\n` +
-        `✨ Sakura’s Detailed Insight:\n${insight}\n` +
+        `✨ Sakura’s Pick: ${insight}\n` +
         `📍 Let’s go!: ${mapUrl}\n\n`;
     }
 
@@ -140,7 +127,7 @@ export default async function handler(req, res) {
   }
 }
 
-/* ---------------- 基本ヘルパー ---------------- */
+/* ---------------- Helpers ---------------- */
 
 function parseStationGenre(text) {
   const cleaned = text.replace(/\s+/g, " ").trim();
@@ -219,7 +206,7 @@ function extractReviewTexts(details) {
   return details.reviews
     .map((r) => (typeof r.text === "string" ? r.text.trim() : ""))
     .filter(Boolean)
-    .slice(0, 8); // 念のため最大8件まで
+    .slice(0, 6);
 }
 
 function makePlacePageUrl(placeId, name, vicinity, station) {
@@ -256,7 +243,7 @@ function shuffleInPlace(arr) {
   }
 }
 
-/* ---------------- OpenAI でレビュー要約 ---------------- */
+/* ---------------- OpenAI Review Summarizer (short) ---------------- */
 
 async function summarizeReviewsWithOpenAI({ openaiKey, placeName, station, genre, reviewTexts }) {
   try {
@@ -264,16 +251,16 @@ async function summarizeReviewsWithOpenAI({ openaiKey, placeName, station, genre
 
     const prompt =
       `You are "Sakura-chan", a cute anime girl food guide for travelers in Japan.\n` +
-      `Write a detailed but concise description of this restaurant in English, based ONLY on the reviews below.\n` +
-      `Style: friendly, cute, enthusiastic, with some Japanese words like "Oishii", but do NOT invent facts that are not clearly implied.\n` +
-      `Do NOT mention numeric ratings or prices. Focus on flavor, atmosphere, service, crowd level, and who might enjoy it.\n\n` +
-      `Restaurant name: ${placeName}\n` +
+      `Based ONLY on the reviews below, write a friendly 2–3 sentence description in English.\n` +
+      `Do NOT mention prices or numeric ratings. Do NOT invent facts.\n` +
+      `Focus on flavor, atmosphere, service, and who might enjoy this place.\n\n` +
+      `Restaurant: ${placeName}\n` +
       `Nearby station: ${station}\n` +
       `Genre: ${genre}\n\n` +
       `Reviews:\n` +
       reviewTexts.map((t, i) => `(${i + 1}) ${t}`).join("\n") +
       `\n\n` +
-      `Now write 3–6 sentences as Sakura-chan, starting directly with the description (no bullet points).`;
+      `Now write the description as Sakura-chan (2–3 sentences).`;
 
     const resp = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -284,30 +271,21 @@ async function summarizeReviewsWithOpenAI({ openaiKey, placeName, station, genre
       body: JSON.stringify({
         model: "gpt-4.1-mini",
         messages: [
-          {
-            role: "system",
-            content:
-              "You are Sakura-chan, a cute anime girl who explains restaurant vibes in natural English for foreign travelers in Japan.",
-          },
+          { role: "system", content: "You are Sakura-chan, a cute anime girl food guide." },
           { role: "user", content: prompt },
         ],
-        max_tokens: 320,
+        max_tokens: 160,
         temperature: 0.7,
       }),
     });
 
-    if (!resp.ok) {
-      const txt = await resp.text();
-      console.error("OpenAI error:", resp.status, txt);
-      return "";
-    }
+    if (!resp.ok) return "";
 
     const data = await resp.json();
     const content = data.choices?.[0]?.message?.content;
     if (typeof content !== "string") return "";
     return content.trim();
-  } catch (e) {
-    console.error("summarizeReviewsWithOpenAI error:", e);
+  } catch {
     return "";
   }
 }
